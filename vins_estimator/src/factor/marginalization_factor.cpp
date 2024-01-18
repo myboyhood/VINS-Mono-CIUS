@@ -86,14 +86,15 @@ MarginalizationInfo::~MarginalizationInfo()
     }
 }
 
+//把drop_set的块的大小置为0
 void MarginalizationInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block_info)
 {
     factors.emplace_back(residual_block_info);
 
-    std::vector<double *> &parameter_blocks = residual_block_info->parameter_blocks;
+    std::vector<double *> &parameter_blocks = residual_block_info->parameter_blocks;//放入的是marginlization中涉及到的imu和视觉的状态，也就是最老的相机和imu，也包括上次last_marginalization_info中的保留的状态.
     std::vector<int> parameter_block_sizes = residual_block_info->cost_function->parameter_block_sizes();
 
-    for (int i = 0; i < static_cast<int>(residual_block_info->parameter_blocks.size()); i++)
+    for (int i = 0; i < static_cast<int>(residual_block_info->parameter_blocks.size()); i++)//要保留的状态
     {
         double *addr = parameter_blocks[i];
         int size = parameter_block_sizes[i];
@@ -103,7 +104,7 @@ void MarginalizationInfo::addResidualBlockInfo(ResidualBlockInfo *residual_block
     for (int i = 0; i < static_cast<int>(residual_block_info->drop_set.size()); i++)
     {
         double *addr = parameter_blocks[residual_block_info->drop_set[i]];
-        parameter_block_idx[reinterpret_cast<long>(addr)] = 0;
+        parameter_block_idx[reinterpret_cast<long>(addr)] = 0;//把drop_set的idx序号置0
     }
 }
 
@@ -111,13 +112,13 @@ void MarginalizationInfo::preMarginalize()
 {
     for (auto it : factors)
     {
-        it->Evaluate();
+        it->Evaluate();//计算每个IMU，视觉的残差和雅克比，其中是调用了ceres的Evaluate函数，传入参数parameter_blocks数据，得到残差和雅克比。
 
         std::vector<int> block_sizes = it->cost_function->parameter_block_sizes();
         for (int i = 0; i < static_cast<int>(block_sizes.size()); i++)
         {
-            long addr = reinterpret_cast<long>(it->parameter_blocks[i]);
-            int size = block_sizes[i];
+            long addr = reinterpret_cast<long>(it->parameter_blocks[i]);//表示状态块的首地址
+            int size = block_sizes[i];//表示状态块的大小
             if (parameter_block_data.find(addr) == parameter_block_data.end())
             {
                 double *data = new double[size];
@@ -174,7 +175,7 @@ void* ThreadsConstructA(void* threadsstruct)
 void MarginalizationInfo::marginalize()
 {
     int pos = 0;
-    for (auto &it : parameter_block_idx)
+    for (auto &it : parameter_block_idx) //parameter_block_size存放的是要被marg的状态
     {
         it.second = pos;
         pos += localSize(parameter_block_size[it.first]);
@@ -182,16 +183,16 @@ void MarginalizationInfo::marginalize()
 
     m = pos;
 
-    for (const auto &it : parameter_block_size)
+    for (const auto &it : parameter_block_size) //保留的状态
     {
         if (parameter_block_idx.find(it.first) == parameter_block_idx.end())
         {
-            parameter_block_idx[it.first] = pos;
+            parameter_block_idx[it.first] = pos;//对保留的状态重新赋值给 parameter_block_idx,
             pos += localSize(it.second);
         }
     }
 
-    n = pos - m;
+    n = pos - m; //m是要marg的状态的总大小，n是保留的状态的总大小
 
     //ROS_DEBUG("marginalization, pos: %d, m: %d, n: %d, size: %d", pos, m, n, (int)parameter_block_idx.size());
 
@@ -200,7 +201,7 @@ void MarginalizationInfo::marginalize()
     Eigen::VectorXd b(pos);
     A.setZero();
     b.setZero();
-    /*
+    /// >>>>>>> cius use single
     for (auto it : factors)
     {
         for (int i = 0; i < static_cast<int>(it->parameter_blocks.size()); i++)
@@ -225,7 +226,7 @@ void MarginalizationInfo::marginalize()
         }
     }
     ROS_INFO("summing up costs %f ms", t_summing.toc());
-    */
+    ///
     //multi thread
 
 
@@ -280,6 +281,8 @@ void MarginalizationInfo::marginalize()
     A = Arr - Arm * Amm_inv * Amr;
     b = brr - Arm * Amm_inv * bmm;
 
+    // 从概率的角度理解,马氏范数通过标准差将不同的观测的残差项的概率特性统一到同一个尺度下(残差项归一化)：
+    // 即每个观测残差除以标准差，在这个过程中消掉了观测残差的单位（长度，角度），使得不同观测来源的残差的2范数可以直接相加。
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> saes2(A);
     Eigen::VectorXd S = Eigen::VectorXd((saes2.eigenvalues().array() > eps).select(saes2.eigenvalues().array(), 0));
     Eigen::VectorXd S_inv = Eigen::VectorXd((saes2.eigenvalues().array() > eps).select(saes2.eigenvalues().array().inverse(), 0));
@@ -303,7 +306,7 @@ std::vector<double *> MarginalizationInfo::getParameterBlocks(std::unordered_map
     keep_block_idx.clear();
     keep_block_data.clear();
 
-    for (const auto &it : parameter_block_idx)
+    for (const auto &it : parameter_block_idx) //因为
     {
         if (it.second >= m)
         {

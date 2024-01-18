@@ -18,6 +18,7 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
     }
     virtual bool Evaluate(double const *const *parameters, double *residuals, double **jacobians) const
     {
+        //IMU的残差是，imu预积分的值，和两个状态的值的差，进行相减，得到的误差。
 
         Eigen::Vector3d Pi(parameters[0][0], parameters[0][1], parameters[0][2]);
         Eigen::Quaterniond Qi(parameters[0][6], parameters[0][3], parameters[0][4], parameters[0][5]);

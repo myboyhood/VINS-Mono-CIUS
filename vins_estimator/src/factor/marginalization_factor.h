@@ -56,9 +56,9 @@ class MarginalizationInfo
 
     std::vector<ResidualBlockInfo *> factors;
     int m, n;
-    std::unordered_map<long, int> parameter_block_size; //global size
+    std::unordered_map<long, int> parameter_block_size; //global size 所有要优化的状态的
     int sum_block_size;
-    std::unordered_map<long, int> parameter_block_idx; //local size
+    std::unordered_map<long, int> parameter_block_idx; //local size 要marg掉的状态的在 parameter_block_size 的 id
     std::unordered_map<long, double *> parameter_block_data;
 
     std::vector<int> keep_block_size; //global size

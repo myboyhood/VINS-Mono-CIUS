@@ -698,8 +698,8 @@ void Estimator::optimization()
     }
 
     TicToc t_whole, t_prepare;
-    vector2double();
-
+    vector2double(); //把窗内各个变量转为para的列
+    //窗口该剔除旧帧时候，调用
     if (last_marginalization_info)
     {
         // construct new marginlization_factor
@@ -707,7 +707,10 @@ void Estimator::optimization()
         problem.AddResidualBlock(marginalization_factor, NULL,
                                  last_marginalization_parameter_blocks);
     }
-
+    /**
+     * imu和视觉的AddResidualBlock都是直接调用ceres的AddResidualBlock函数，而marg重写了AddResidualBlock函数，用来加它自己这部分残差。
+     */
+    //往ceres中增加imu，cost_function 目的是提供计算雅科比和残差的方法。它作为AddResidualBlock的一个参数
     for (int i = 0; i < WINDOW_SIZE; i++)
     {
         int j = i + 1;
@@ -716,6 +719,7 @@ void Estimator::optimization()
         IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);
         problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
     }
+    //加入视觉残差
     int f_m_cnt = 0;
     int feature_index = -1;
     for (auto &it_per_id : f_manager.feature)
@@ -827,7 +831,7 @@ void Estimator::optimization()
     {
         MarginalizationInfo *marginalization_info = new MarginalizationInfo();
         vector2double();
-
+        //1.如果之前有marg的残留部分，此处加入
         if (last_marginalization_info)
         {
             vector<int> drop_set;
@@ -835,48 +839,48 @@ void Estimator::optimization()
             {
                 if (last_marginalization_parameter_blocks[i] == para_Pose[0] ||
                     last_marginalization_parameter_blocks[i] == para_SpeedBias[0])
-                    drop_set.push_back(i);
+                    drop_set.push_back(i);//扔掉的状态量索引序号
             }
             // construct new marginlization_factor
-            MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);
+            MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);//先把旧的H矩阵放进去
             ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(marginalization_factor, NULL,
                                                                            last_marginalization_parameter_blocks,
-                                                                           drop_set);
+                                                                           drop_set);//只是赋值，没有操作。对旧的H信息矩阵，中drop_set进行shur补，得到新的信息H。
 
             marginalization_info->addResidualBlockInfo(residual_block_info);
         }
-
+        //2.加入需要marg的IMU连接的状态量
         {
             if (pre_integrations[1]->sum_dt < 10.0)
             {
-                IMUFactor* imu_factor = new IMUFactor(pre_integrations[1]);
+                IMUFactor* imu_factor = new IMUFactor(pre_integrations[1]);//把要剔除最老的相机状态和次老的相机状态之间的imu预积分值拿出来，只把状态量塞进去，但不计算残差和雅克比，统一放在pre_marglize中的evaluate去计算。
                 ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
                                                                            vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
-                                                                           vector<int>{0, 1});
-                marginalization_info->addResidualBlockInfo(residual_block_info);
+                                                                           vector<int>{0, 1});//与之前普通的residual不同的是，此处指定了drop_set，即要剔除的状态量索引序号
+                marginalization_info->addResidualBlockInfo(residual_block_info);//最重要的是把cost_function和parameter_block放进去,把最老的相机状态的 para_Pose[0], para_SpeedBias[0]的值置为0
             }
         }
-
+        //3.加入需要marg的feature部分
         {
             int feature_index = -1;
             for (auto &it_per_id : f_manager.feature)
             {
-                it_per_id.used_num = it_per_id.feature_per_frame.size();
+                it_per_id.used_num = it_per_id.feature_per_frame.size();//该特征在多少帧中出现过
                 if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
                     continue;
 
                 ++feature_index;
 
                 int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
-                if (imu_i != 0)
+                if (imu_i != 0)//只对首次出现帧是第一帧的feature进行marg处理，其余的feature，与marg变量无关。
                     continue;
 
-                Vector3d pts_i = it_per_id.feature_per_frame[0].point;
+                Vector3d pts_i = it_per_id.feature_per_frame[0].point;//第一帧中的xyz
 
                 for (auto &it_per_frame : it_per_id.feature_per_frame)
                 {
                     imu_j++;
-                    if (imu_i == imu_j)
+                    if (imu_i == imu_j)//排除第一帧
                         continue;
 
                     Vector3d pts_j = it_per_frame.point;
@@ -958,7 +962,7 @@ void Estimator::optimization()
 
             TicToc t_pre_margin;
             ROS_DEBUG("begin marginalization");
-            marginalization_info->preMarginalize();
+            marginalization_info->preMarginalize();//计算每个小块对应的残差和雅克比
             ROS_DEBUG("end pre marginalization, %f ms", t_pre_margin.toc());
 
             TicToc t_margin;
